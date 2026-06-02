@@ -1,9 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { TouchableOpacity, Text, View, StyleSheet, Alert } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  TouchableOpacity,
+  Text,
+  View,
+  StyleSheet,
+  Alert,
+} from 'react-native';
 import { Audio } from 'expo-av';
 
 export default function App() {
-  // Estados de Controle
   const [sound, setSound] = useState(null);
   const [recording, setRecording] = useState(null);
   const [recordedSound, setRecordedSound] = useState(null);
@@ -11,7 +16,9 @@ export default function App() {
   const [isLooping, setIsLooping] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
 
-  // Configuração inicial e Limpeza de Memória
+  const soundRef = useRef(null);
+  const recordedSoundRef = useRef(null);
+
   useEffect(() => {
     async function setupAudio() {
       try {
@@ -23,7 +30,7 @@ export default function App() {
         });
 
         const { sound: playbackObject } = await Audio.Sound.createAsync(
-          require('./assets/audio.mp3') // Verifique se o nome do arquivo está correto na pasta assets
+          require('./assets/560446music.mp3')
         );
 
         playbackObject.setOnPlaybackStatusUpdate((status) => {
@@ -31,127 +38,150 @@ export default function App() {
             setIsPlaying(status.isPlaying);
           }
         });
-        
+
+        soundRef.current = playbackObject;
         setSound(playbackObject);
       } catch (error) {
-        Alert.alert('Erro', 'Não foi possível carregar o arquivo de áudio inicial.');
+        Alert.alert(
+          'Erro',
+          'Não foi possível carregar o arquivo de áudio inicial.'
+        );
       }
     }
 
     setupAudio();
 
-    // Tarefa 1: Função de Limpeza (Descarrega memória no unmount)
     return () => {
-      if (sound) {
-        sound.unloadAsync();
-      }
-      if (recordedSound) {
-        recordedSound.unloadAsync();
-      }
+      (async () => {
+        try {
+          if (soundRef.current) {
+            await soundRef.current.unloadAsync();
+          }
+
+          if (recordedSoundRef.current) {
+            await recordedSoundRef.current.unloadAsync();
+          }
+        } catch (error) {
+          console.log(error);
+        }
+      })();
     };
   }, []);
 
-  // Função para recarregar o áudio base manualmente após ter sido descarregado
-  async function loadSound() {
-    try {
-      const { sound: playbackObject } = await Audio.Sound.createAsync(
-        require('./assets/audio.mp3')
-      );
-      
-      playbackObject.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded) {
-          setIsPlaying(status.isPlaying);
-        }
-      });
-      
-      setSound(playbackObject);
-    } catch (error) {
-      console.log("Erro ao recarregar o áudio:", error);
-    }
-  }
-
-  // Tarefa 4: Controle de Navegação do Áudio Base
   async function togglePlaySound() {
     if (!sound) return;
+
     try {
       const status = await sound.getStatusAsync();
+
       if (status.isLoaded) {
         if (status.isPlaying) {
           await sound.pauseAsync();
         } else {
-          // Se o som já terminou: volta o ponteiro para o início (0 milissegundos)
-          if (status.positionMillis >= status.durationMillis) {
+          if (
+            status.durationMillis &&
+            status.positionMillis >= status.durationMillis
+          ) {
             await sound.setPositionAsync(0);
           }
+
           await sound.playAsync();
         }
       }
     } catch (error) {
-      console.log("Erro ao alternar play/pause: ", error);
+      console.log('Erro ao reproduzir áudio:', error);
     }
   }
 
-  // Ativa/desativa loop do áudio base
   async function toggleLoop() {
     if (!sound) return;
+
     try {
-      await sound.setIsLoopingAsync(!isLooping);
-      setIsLooping(!isLooping);
+      const novoEstado = !isLooping;
+      await sound.setIsLoopingAsync(novoEstado);
+      setIsLooping(novoEstado);
     } catch (error) {
       console.log(error);
     }
   }
 
-  // Descarrega o som base da memória e desabilita interface
   async function unloadSound() {
     if (!sound) return;
+
     try {
       await sound.stopAsync();
       await sound.unloadAsync();
+
+      soundRef.current = null;
+
       setSound(null);
       setIsPlaying(false);
-      setIsLooping(false); // Reseta o status visual do loop
+      setIsLooping(false);
     } catch (error) {
       console.log(error);
     }
   }
 
-  // Tarefa 2: Sincronização Estrita de Modos de Áudio para Gravação
   async function toggleRecording() {
     if (isRecording) {
       try {
         await recording.stopAndUnloadAsync();
+
         const uri = recording.getURI();
+
         setRecording(null);
         setIsRecording(false);
 
-        // Desativa modo de gravação para liberar reprodução limpa nos alto-falantes
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldRouteThroughEarpieceAndroid: false,
+        });
 
-        const { sound: newSound } = await Audio.Sound.createAsync({ uri });
+        if (recordedSoundRef.current) {
+          await recordedSoundRef.current.unloadAsync();
+        }
+
+        const { sound: newSound } = await Audio.Sound.createAsync({
+          uri,
+        });
+
+        recordedSoundRef.current = newSound;
         setRecordedSound(newSound);
-        Alert.alert('Gravação Salva', 'Use o botão abaixo para reproduzir a anomalia acústica.');
+
+        Alert.alert(
+          'Gravação concluída',
+          `Arquivo salvo:\n${uri}`
+        );
       } catch (error) {
         console.log(error);
       }
     } else {
       try {
-        const { granted } = await Audio.requestPermissionsAsync();
+        const { granted } =
+          await Audio.requestPermissionsAsync();
+
         if (!granted) {
-          Alert.alert('Permissão negada', 'Habilite o microfone nas configurações.');
+          Alert.alert(
+            'Permissão negada',
+            'Habilite o microfone nas configurações.'
+          );
           return;
         }
-        
-        // Ativa modo estrito de gravação
+
         await Audio.setAudioModeAsync({
           allowsRecordingIOS: true,
           playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldRouteThroughEarpieceAndroid: false,
         });
 
-        const { recording: rec } = await Audio.Recording.createAsync(
-          Audio.RecordingOptionsPresets.HIGH_QUALITY
-        );
-        
+        const { recording: rec } =
+          await Audio.Recording.createAsync(
+            Audio.RecordingOptionsPresets.HIGH_QUALITY
+          );
+
         setRecording(rec);
         setIsRecording(true);
       } catch (error) {
@@ -160,9 +190,9 @@ export default function App() {
     }
   }
 
-  // Reproduz o áudio que o técnico acabou de gravar (Auditoria)
   async function playRecordedSound() {
     if (!recordedSound) return;
+
     try {
       await recordedSound.replayAsync();
     } catch (error) {
@@ -170,89 +200,123 @@ export default function App() {
     }
   }
 
-  // Tarefa 3: Lógica Condicional de Interface UI/UX
   return (
     <View style={styles.container}>
-      
-      {/* Lógica Condicional: Se tem som na memória, mostra os controles. Se não tem, mostra o botão de Carregar */}
-      {sound ? (
-        <>
-          <TouchableOpacity style={styles.button} onPress={togglePlaySound}>
-            <Text style={styles.buttonText}>{isPlaying ? 'Pausar' : 'Tocar'} Áudio Base</Text>
-          </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.button,
+          !sound && styles.disabledButton,
+        ]}
+        onPress={togglePlaySound}
+        disabled={!sound}
+      >
+        <Text style={styles.buttonText}>
+          {isPlaying ? '⏸ Pausar Som' : '▶ Tocar Som'}
+        </Text>
+      </TouchableOpacity>
 
-          <TouchableOpacity style={styles.button} onPress={toggleLoop}>
-            <Text style={styles.buttonText}>{isLooping ? 'Loop: ON' : 'Loop: OFF'}</Text>
-          </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.button,
+          !sound && styles.disabledButton,
+        ]}
+        onPress={toggleLoop}
+        disabled={!sound}
+      >
+        <Text style={styles.buttonText}>
+          {isLooping
+            ? '🔁 Desativar Loop'
+            : '🔂 Ativar Loop'}
+        </Text>
+      </TouchableOpacity>
 
-          <TouchableOpacity style={styles.button} onPress={unloadSound}>
-            <Text style={styles.buttonText}>Descarregar Som</Text>
-          </TouchableOpacity>
-        </>
-      ) : (
-        <TouchableOpacity style={styles.button} onPress={loadSound}>
-          <Text style={styles.buttonText}>Carregar Áudio Base</Text>
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity
+        style={[
+          styles.button,
+          !sound && styles.disabledButton,
+        ]}
+        onPress={unloadSound}
+        disabled={!sound}
+      >
+        <Text style={styles.buttonText}>
+          🗑 Descarregar Som
+        </Text>
+      </TouchableOpacity>
 
       <View style={styles.separator} />
 
-      {/* Controles de Auditoria (Gravação no Chão de Fábrica) */}
       <TouchableOpacity
-        style={[styles.button, isRecording ? styles.recordingActive : styles.recordingInactive]}
+        style={[
+          styles.button,
+          {
+            backgroundColor: isRecording
+              ? '#dc3545'
+              : '#28a745',
+          },
+        ]}
         onPress={toggleRecording}
       >
-        <Text style={styles.buttonText}>{isRecording ? '⏹ Parar Gravação' : '🎙 Gravar'}</Text>
+        <Text style={styles.buttonText}>
+          {isRecording
+            ? '⏹ Parar Gravação'
+            : '🎙 Gravar'}
+        </Text>
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[styles.button, !recordedSound && styles.disabledButton]}
+        style={[
+          styles.button,
+          !recordedSound && styles.disabledButton,
+        ]}
         onPress={playRecordedSound}
         disabled={!recordedSound}
       >
-        <Text style={styles.buttonText}>Reproduzir Captura</Text>
+        <Text style={styles.buttonText}>
+          ▶ Reproduzir Gravação
+        </Text>
       </TouchableOpacity>
-      
     </View>
   );
 }
 
-// Estilização do Aplicativo
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 15,
-    backgroundColor: '#252525',
+    backgroundColor: '#f5f5f5',
+    gap: 12,
   },
+
   separator: {
     height: 20,
   },
+
   button: {
-    width: 220,
+    width: 250,
     height: 50,
-    backgroundColor: '#2196F3',
     borderRadius: 25,
+    backgroundColor: '#007bff',
     justifyContent: 'center',
     alignItems: 'center',
+
     elevation: 4,
+
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
     shadowOpacity: 0.25,
-    shadowRadius: 4,
+    shadowRadius: 3.84,
   },
+
   disabledButton: {
-    backgroundColor: '#ccc',
+    backgroundColor: '#bdbdbd',
     elevation: 0,
     shadowOpacity: 0,
   },
-  recordingInactive: {
-    backgroundColor: '#2e7d32', // Verde indicando pronto para gravar
-  },
-  recordingActive: {
-    backgroundColor: '#d32f2f', // Vermelho indicando gravação em andamento
-  },
+
   buttonText: {
     color: '#fff',
     fontSize: 16,
